@@ -4,8 +4,12 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      template_ref:
+        description: "Branch or tag of FabricMC/fabric-example-mod to build against (blank = default branch)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -14,26 +18,69 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout mod sources
+        uses: actions/checkout@v4
+        with:
+          path: mod
+
+      - name: Fetch Fabric template (supplies gradlew, Loom and Fabric API versions)
+        env:
+          REF: ${{ inputs.template_ref }}
+        run: |
+          git clone --depth 1 ${REF:+--branch "$REF"} https://github.com/FabricMC/fabric-example-mod.git template
+          echo "Template Minecraft version:"
+          grep -E '^minecraft_version' template/gradle.properties || true
+
+      - name: Overlay mod sources onto template
+        run: |
+          # use the client source set if the template splits client/main
+          if [ -d template/src/client ]; then DEST=template/src/client/java; else DEST=template/src/main/java; fi
+          rm -rf template/src/main/java template/src/client
+          mkdir -p "$DEST" template/src/main/java template/src/main/resources
+          cp -r mod/src/main/java/dev "$DEST"/
+          # replace the template's metadata; drop its mixin configs
+          rm -f template/src/main/resources/*.mixins.json
+          cat > template/src/main/resources/fabric.mod.json <<'EOF'
+          {
+            "schemaVersion": 1,
+            "id": "ahflipper",
+            "version": "0.1.0",
+            "name": "AH Flipper",
+            "description": "Scans the SkyBlock auction house for liquid, underpriced items.",
+            "environment": "client",
+            "entrypoints": { "client": ["dev.flipper.FlipperMod"] },
+            "depends": { "fabricloader": "*", "minecraft": "*", "fabric-api": "*" }
+          }
+          EOF
+          sed -i 's/^archives_base_name=.*/archives_base_name=ahflipper/' template/gradle.properties
+
+      - name: Detect Java version
+        id: java
+        run: |
+          J=$(grep -oE 'VERSION_[0-9]+|release = [0-9]+' template/build.gradle | grep -oE '[0-9]+$' | head -1)
+          echo "version=${J:-25}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 25   # use whatever Java version the Fabric template lists for 26.2
+          java-version: ${{ steps.java.outputs.version }}
 
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: template
 
       - name: Build
+        working-directory: template
         run: chmod +x gradlew && ./gradlew build
 
       - name: Upload jar
         uses: actions/upload-artifact@v4
         with:
           name: ahflipper-jar
-          path: build/libs/*.jar
+          path: template/build/libs/*.jar
 
       - name: Attach jar to release (tags like v0.1.0)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/libs/*.jar
+          files: template/build/libs/*.jar
