@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "ahflipper",
+  "version": "0.1.0",
+  "name": "AH Flipper",
+  "description": "Scans the SkyBlock auction house for liquid, underpriced items.",
+  "environment": "client",
+  "entrypoints": { "client": ["dev.flipper.FlipperMod"] },
+  "depends": { "fabricloader": ">=0.17", "minecraft": "~26.2", "fabric-api": "*" }
+}
